@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>سكانر المنتجات</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.0.2/tesseract.min.js"></script>
+<style>
+  :root{
+    --paper:#F7F4EC;
+    --paper-2:#EFEAdd;
+    --ink:#1E1B16;
+    --ink-soft:#6B6558;
+    --line:#DDD6C7;
+    --accent:#E8622C;
+    --accent-ink:#ffffff;
+    --ok:#3F7D5C;
+    --danger:#B3432B;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);font-family:'Cairo',sans-serif;}
+  body{min-height:100vh; padding-bottom:100px;}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+
+  /* barcode stripe divider - signature element */
+  .barcode-stripe{
+    height:14px;
+    background-image: repeating-linear-gradient(90deg,
+      var(--ink) 0px, var(--ink) 2px,
+      transparent 2px, transparent 4px,
+      var(--ink) 4px, var(--ink) 5px,
+      transparent 5px, transparent 9px,
+      var(--ink) 9px, var(--ink) 12px,
+      transparent 12px, transparent 14px);
+    opacity:0.85;
+  }
+
+  header{
+    background:var(--ink);
+    color:var(--paper);
+    padding:18px 16px 14px;
+    position:sticky; top:0; z-index:20;
+  }
+  header .top-row{display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;}
+  header h1{font-size:19px; margin:0; font-weight:800; letter-spacing:.2px;}
+  header .count{font-size:12px; color:#C9C2AE; font-family:'IBM Plex Mono',monospace;}
+
+  /* scanner-screen search bar */
+  .scan-screen{
+    background:#12140f;
+    border:1px solid #2b2e26;
+    border-radius:10px;
+    padding:10px 12px;
+    display:flex; align-items:center; gap:10px;
+    position:relative; overflow:hidden;
+  }
+  .scan-screen input{
+    flex:1; background:transparent; border:none; outline:none;
+    color:#B7F2C9; font-family:'IBM Plex Mono',monospace; font-size:16px; letter-spacing:.5px;
+  }
+  .scan-screen input::placeholder{color:#5c6b5a;}
+  .scan-screen .dot{width:8px;height:8px;border-radius:50%;background:#B7F2C9; box-shadow:0 0 6px #B7F2C9; flex-shrink:0;}
+  .scan-line{
+    position:absolute; right:0; left:0; top:0; height:2px; background:#B7F2C9; opacity:0;
+  }
+  .scan-screen.active .scan-line{
+    opacity:.7; animation:scan 1.4s linear infinite;
+  }
+  @keyframes scan{0%{top:0;} 100%{top:100%;}}
+
+  main{padding:14px 16px 0;}
+
+  .empty{
+    text-align:center; padding:60px 20px; color:var(--ink-soft);
+  }
+  .empty .big{font-size:42px; margin-bottom:10px;}
+  .empty p{margin:4px 0; font-size:14px;}
+
+  .card{
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:12px;
+    margin-bottom:12px;
+    overflow:hidden;
+    display:flex;
+    box-shadow:0 1px 2px rgba(30,27,22,0.04);
+  }
+  .card .thumb{
+    width:84px; height:84px; flex-shrink:0; background:var(--paper-2);
+    display:flex; align-items:center; justify-content:center; overflow:hidden;
+    border-left:1px solid var(--line);
+  }
+  .card .thumb img{width:100%; height:100%; object-fit:cover; display:block;}
+  .card .thumb .ph{font-size:22px; color:#B7AF98;}
+  .card .info{flex:1; padding:10px 12px; min-width:0;}
+  .card .row1{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
+  .card .name{font-weight:700; font-size:14.5px; line-height:1.35; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;}
+  .card .price{
+    font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14px;
+    background:var(--accent); color:#fff; padding:3px 8px; border-radius:6px; white-space:nowrap; flex-shrink:0;
+  }
+  .card .barcode{margin-top:6px; font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--ink-soft); letter-spacing:.5px;}
+  .card .barcode b{color:var(--ink);}
+
+  .card-edit{padding:10px 12px 12px; border-top:1px dashed var(--line); background:#FCFBF7;}
+  .card-edit .field{margin-bottom:8px;}
+  .card-edit label{display:block; font-size:11.5px; color:var(--ink-soft); margin-bottom:3px;}
+  .card-edit input{width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-family:'Cairo',sans-serif; font-size:14px; background:#fff;}
+  .card-edit .btn-row{display:flex; gap:8px; margin-top:6px;}
+
+  button{font-family:'Cairo',sans-serif; cursor:pointer; border:none;}
+  .btn{padding:9px 14px; border-radius:8px; font-size:13.5px; font-weight:700;}
+  .btn-accent{background:var(--accent); color:#fff;}
+  .btn-ok{background:var(--ok); color:#fff;}
+  .btn-danger{background:var(--danger); color:#fff;}
+  .btn-ghost{background:var(--paper-2); color:var(--ink);}
+  .btn-block{width:100%;}
+
+  /* FAB */
+  .fab{
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%);
+    background:var(--accent); color:#fff; border-radius:30px;
+    padding:14px 26px; font-weight:800; font-size:15px;
+    box-shadow:0 6px 18px rgba(232,98,44,0.4);
+    display:flex; align-items:center; gap:8px; z-index:30;
+  }
+  .fab span.icon{font-size:18px;}
+
+  /* modal / sheet */
+  .sheet-backdrop{
+    position:fixed; inset:0; background:rgba(20,18,14,0.55); z-index:50;
+    display:flex; align-items:flex-end; justify-content:center;
+  }
+  .sheet{
+    background:var(--paper); width:100%; max-width:520px; border-radius:18px 18px 0 0;
+    max-height:88vh; overflow-y:auto; padding:16px 16px 22px;
+  }
+  .sheet-handle{width:40px; height:4px; background:var(--line); border-radius:3px; margin:0 auto 12px;}
+  .sheet h2{font-size:16px; margin:0 0 12px; font-weight:800;}
+
+  .photo-box{
+    border:2px dashed var(--line); border-radius:12px; padding:16px; text-align:center; color:var(--ink-soft);
+    margin-bottom:14px; position:relative; overflow:hidden;
+  }
+  .photo-box img{max-width:100%; max-height:220px; border-radius:8px; display:block; margin:0 auto;}
+  .photo-actions{display:flex; gap:10px; margin-top:10px;}
+  .photo-actions label.btn{display:flex; align-items:center; justify-content:center; flex:1;}
+  input[type=file]{display:none;}
+
+  .ocr-status{
+    display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-soft); margin:8px 0 4px;
+  }
+  .spinner{width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  .rows-title{font-size:12.5px; color:var(--ink-soft); margin:12px 0 6px; display:flex; justify-content:space-between; align-items:center;}
+  .prow{
+    background:#fff; border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:8px;
+    display:grid; grid-template-columns:1fr; gap:6px; position:relative;
+  }
+  .prow input{padding:8px 9px; border:1px solid var(--line); border-radius:7px; font-family:'Cairo',sans-serif; font-size:13.5px;}
+  .prow input.mono{font-family:'IBM Plex Mono',monospace;}
+  .prow .rm{
+    position:absolute; top:8px; left:8px; background:none; color:var(--danger); font-size:13px; font-weight:700;
+  }
+  .prow .grid2{display:grid; grid-template-columns:1fr 1fr; gap:6px;}
+
+  .add-row-btn{
+    width:100%; padding:9px; border:1px dashed var(--line); border-radius:8px; background:none; color:var(--ink-soft); font-size:13px; font-weight:700;
+  }
+
+  .toast{
+    position:fixed; bottom:100px; left:50%; transform:translateX(-50%);
+    background:var(--ink); color:var(--paper); padding:10px 18px; border-radius:10px; font-size:13.5px;
+    z-index:60; opacity:0; transition:opacity .25s;
+  }
+  .toast.show{opacity:1;}
+
+  .hint{font-size:11.5px; color:var(--ink-soft); margin-top:6px; line-height:1.6;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="top-row">
+    <h1>📦 سكانر المنتجات</h1>
+    <div class="count" id="countLabel">٠ منتج</div>
+  </div>
+  <div class="scan-screen" id="scanScreen">
+    <div class="dot"></div>
+    <input id="searchInput" type="text" placeholder="ابحث بالباركود أو اسم المنتج...">
+    <div class="scan-line"></div>
+  </div>
+</header>
+
+<div class="barcode-stripe"></div>
+
+<main>
+  <div id="listArea"></div>
+</main>
+
+<div class="fab" id="openAddBtn">
+  <span class="icon">📷</span>
+  <span>إضافة صورة منتجات</span>
+</div>
+
+<div id="sheetRoot"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const STORAGE_INDEX_KEY = 'product-index';
+let state = { products: [] }; // {id,name,price,barcode,createdAt}
+let currentPhotoDataUrl = null;
+let currentThumbDataUrl = null;
+let rowsData = []; // {name, price, barcode}
+
+// ---------- storage helpers ----------
+async function loadIndex(){
+  try{
+    const res = await window.storage.get(STORAGE_INDEX_KEY, false);
+    if(res && res.value){ state.products = JSON.parse(res.value); }
+  }catch(e){ state.products = []; }
+  render();
+}
+async function saveIndex(){
+  await window.storage.set(STORAGE_INDEX_KEY, JSON.stringify(state.products), false);
+}
+async function saveFullRecord(id, record){
+  await window.storage.set('product:'+id, JSON.stringify(record), false);
+}
+async function getFullRecord(id){
+  try{
+    const res = await window.storage.get('product:'+id, false);
+    return res ? JSON.parse(res.value) : null;
+  }catch(e){ return null; }
+}
+async function deleteFullRecord(id){
+  try{ await window.storage.delete('product:'+id, false); }catch(e){}
+}
+
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1800);
+}
+
+// ---------- rendering list ----------
+function fmtPrice(p){
+  if(p === '' || p === null || p === undefined) return '—';
+  const n = Number(p);
+  if(isNaN(n)) return p;
+  return n.toFixed(n % 1 === 0 ? 0 : 2);
+}
+
+function render(){
+  const q = (document.getElementById('searchInput').value || '').trim();
+  document.getElementById('countLabel').textContent = toArabicDigits(state.products.length) + ' منتج';
+  let list = state.products.slice().sort((a,b)=>b.createdAt - a.createdAt);
+  if(q){
+    const qDigits = q.replace(/[^0-9]/g,'');
+    list = list.filter(p=>{
+      const nameMatch = (p.name||'').includes(q);
+      const barcodeMatch = qDigits && (p.barcode||'').includes(qDigits);
+      const barcodeTextMatch = (p.barcode||'').includes(q);
+      return nameMatch || barcodeMatch || barcodeTextMatch;
+    });
+    // prioritize exact/startswith barcode matches
+    list.sort((a,b)=>{
+      const aStarts = (a.barcode||'').startsWith(qDigits) && qDigits ? 0 : 1;
+      const bStarts = (b.barcode||'').startsWith(qDigits) && qDigits ? 0 : 1;
+      return aStarts - bStarts;
+    });
+  }
+
+  const area = document.getElementById('listArea');
+  if(list.length === 0){
+    area.innerHTML = `<div class="empty">
+      <div class="big">🔍</div>
+      <p>${q ? 'ما لقيت أي منتج مطابق' : 'ما فيه منتجات محفوظة بعد'}</p>
+      <p>${q ? 'جرب كلمة أو رقم باركود ثاني' : 'اضغط على "إضافة صورة منتجات" وابدأ'}</p>
+    </div>`;
+    return;
+  }
+
+  area.innerHTML = list.map(p => `
+    <div class="card" data-id="${p.id}">
+      <div class="thumb">${p.thumb ? `<img src="${p.thumb}">` : `<span class="ph">📦</span>`}</div>
+      <div class="info">
+        <div class="row1">
+          <div class="name">${escapeHtml(p.name || 'بدون اسم')}</div>
+          <div class="price mono">${fmtPrice(p.price)}</div>
+        </div>
+        <div class="barcode">باركود: <b>${p.barcode ? toArabicDigits(p.barcode) : '—'}</b></div>
+      </div>
+    </div>
+  `).join('');
+
+  area.querySelectorAll('.card').forEach(card=>{
+    card.addEventListener('click', ()=> openEditSheet(card.dataset.id));
+  });
+}
+
+function escapeHtml(s){
+  return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function toArabicDigits(s){
+  const map = {'0':'٠','1':'١','2':'٢','3':'٣','4':'٤','5':'٥','6':'٦','7':'٧','8':'٨','9':'٩'};
+  return String(s).replace(/[0-9]/g, d=>map[d]);
+}
+
+document.getElementById('searchInput').addEventListener('input', render);
+document.getElementById('searchInput').addEventListener('focus', ()=>document.getElementById('scanScreen').classList.add('active'));
+document.getElementById('searchInput').addEventListener('blur', ()=>document.getElementById('scanScreen').classList.remove('active'));
+
+// ---------- edit sheet ----------
+async function openEditSheet(id){
+  const full = await getFullRecord(id);
+  const idx = state.products.find(p=>p.id===id);
+  if(!idx) return;
+  const root = document.getElementById('sheetRoot');
+  root.innerHTML = `
+    <div class="sheet-backdrop" id="backdrop">
+      <div class="sheet">
+        <div class="sheet-handle"></div>
+        <h2>تعديل المنتج</h2>
+        ${full && full.thumb ? `<div class="photo-box" style="padding:8px;"><img src="${full.thumb}"></div>` : ''}
+        <div class="card-edit" style="border:none; padding:0;">
+          <div class="field"><label>اسم المنتج</label><input id="editName" value="${escapeHtml(idx.name||'')}"></div>
+          <div class="field"><label>السعر</label><input id="editPrice" class="mono" value="${idx.price ?? ''}" inputmode="decimal"></div>
+          <div class="field"><label>الباركود</label><input id="editBarcode" class="mono" value="${idx.barcode ?? ''}" inputmode="numeric"></div>
+          <div class="btn-row">
+            <button class="btn btn-ok" style="flex:1" id="saveEditBtn">حفظ التعديل</button>
+            <button class="btn btn-danger" id="deleteBtn">حذف</button>
+            <button class="btn btn-ghost" id="closeEditBtn">إغلاق</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('backdrop').addEventListener('click', (e)=>{ if(e.target.id==='backdrop') closeSheet(); });
+  document.getElementById('closeEditBtn').addEventListener('click', closeSheet);
+  document.getElementById('deleteBtn').addEventListener('click', async ()=>{
+    state.products = state.products.filter(p=>p.id!==id);
+    await saveIndex();
+    await deleteFullRecord(id);
+    closeSheet(); render(); toast('تم الحذف');
+  });
+  document.getElementById('saveEditBtn').addEventListener('click', async ()=>{
+    idx.name = document.getElementById('editName').value.trim();
+    idx.price = document.getElementById('editPrice').value.trim();
+    idx.barcode = document.getElementById('editBarcode').value.trim();
+    await saveIndex();
+    if(full){ full.name=idx.name; full.price=idx.price; full.barcode=idx.barcode; await saveFullRecord(id, full); }
+    closeSheet(); render(); toast('تم الحفظ');
+  });
+}
+function closeSheet(){ document.getElementById('sheetRoot').innerHTML=''; }
+
+// ---------- add flow ----------
+document.getElementById('openAddBtn').addEventListener('click', openAddSheet);
+
+function openAddSheet(){
+  currentPhotoDataUrl = null; currentThumbDataUrl = null; rowsData = [];
+  const root = document.getElementById('sheetRoot');
+  root.innerHTML = `
+    <div class="sheet-backdrop" id="backdrop">
+      <div class="sheet">
+        <div class="sheet-handle"></div>
+        <h2>إضافة منتجات من صورة</h2>
+        <div class="photo-box" id="photoBox">
+          <div>📷 صوّر الجدول أو ارفع صورة له</div>
+          <div class="photo-actions">
+            <label class="btn btn-accent">
+              التقاط صورة
+              <input type="file" accept="image/*" capture="environment" id="cameraInput">
+            </label>
+            <label class="btn btn-ghost">
+              من المعرض
+              <input type="file" accept="image/*" id="galleryInput">
+            </label>
+          </div>
+        </div>
+        <div id="ocrStatus"></div>
+        <div id="rowsWrap" style="display:none;">
+          <div class="rows-title"><span>راجع البيانات المستخرجة وعدّلها إذا احتاجت</span></div>
+          <div id="rowsList"></div>
+          <button class="add-row-btn" id="addRowBtn">+ إضافة سطر منتج يدويًا</button>
+          <div class="btn-row" style="margin-top:14px;">
+            <button class="btn btn-ok btn-block" id="saveAllBtn">حفظ كل المنتجات</button>
+          </div>
+          <div class="hint">💡 الصورة نفسها بترتبط بكل المنتجات المستخرجة منها كمرجع بصري.</div>
+        </div>
+        <div class="btn-row" style="margin-top:10px;">
+          <button class="btn btn-ghost btn-block" id="closeAddBtn">إلغاء</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('backdrop').addEventListener('click', (e)=>{ if(e.target.id==='backdrop') closeSheet(); });
+  document.getElementById('closeAddBtn').addEventListener('click', closeSheet);
+  document.getElementById('cameraInput').addEventListener('change', handlePhotoInput);
+  document.getElementById('galleryInput').addEventListener('change', handlePhotoInput);
+}
+
+function handlePhotoInput(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = async (ev)=>{
+    currentPhotoDataUrl = ev.target.result;
+    const box = document.getElementById('photoBox');
+    box.innerHTML = `<img src="${currentPhotoDataUrl}">`;
+    // build thumbnail
+    currentThumbDataUrl = await makeThumbnail(currentPhotoDataUrl, 300);
+    runOcr(currentPhotoDataUrl);
+  };
+  reader.readAsDataURL(file);
+}
+
+function makeThumbnail(dataUrl, maxW){
+  return new Promise(resolve=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const scale = Math.min(1, maxW / img.width);
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.55));
+    };
+    img.onerror = ()=>resolve(null);
+    img.src = dataUrl;
+  });
+}
+
+async function runOcr(dataUrl){
+  const statusEl = document.getElementById('ocrStatus');
+  statusEl.innerHTML = `<div class="ocr-status"><div class="spinner"></div><span>جاري قراءة البيانات من الصورة تلقائيًا...</span></div>`;
+  try{
+    const result = await Tesseract.recognize(dataUrl, 'eng', {
+      logger: ()=>{}
+    });
+    const text = result && result.data ? result.data.text : '';
+    rowsData = parseLinesToRows(text);
+    statusEl.innerHTML = `<div class="ocr-status">✅ تم الاستخراج التلقائي — راجع النتائج تحت وصححها إذا لزم.</div>`;
+  }catch(err){
+    statusEl.innerHTML = `<div class="ocr-status">⚠️ ما قدرنا نقرأ الصورة تلقائيًا هالمرة. أدخل البيانات يدويًا تحت.</div>`;
+    rowsData = [];
+  }
+  if(rowsData.length === 0) rowsData = [{name:'', price:'', barcode:''}];
+  document.getElementById('rowsWrap').style.display = 'block';
+  renderRows();
+  document.getElementById('addRowBtn').addEventListener('click', ()=>{
+    rowsData.push({name:'', price:'', barcode:''});
+    renderRows();
+  });
+  document.getElementById('saveAllBtn').addEventListener('click', saveAllRows);
+}
+
+function parseLinesToRows(text){
+  const lines = text.split('\n').map(l=>l.trim()).filter(l=>l.length>0);
+  const rows = [];
+  for(const line of lines){
+    const numTokens = line.match(/\d+(?:[.,]\d+)?/g) || [];
+    if(numTokens.length === 0){
+      // could still be a header or noise line, skip if too short
+      continue;
+    }
+    let barcode = '';
+    let price = '';
+    // longest pure-integer token >=6 digits -> barcode
+    let barcodeToken = null;
+    numTokens.forEach(tok=>{
+      const digitsOnly = tok.replace(/[.,]/g,'');
+      if(!tok.includes('.') && !tok.includes(',') && digitsOnly.length >= 6){
+        if(!barcodeToken || digitsOnly.length > barcodeToken.length) barcodeToken = tok;
+      }
+    });
+    if(barcodeToken) barcode = barcodeToken;
+    // price: first token with decimal, or first short token that's not the barcode
+    const priceToken = numTokens.find(tok => tok !== barcodeToken && (tok.includes('.') || tok.includes(',') || tok.replace(/[.,]/g,'').length <= 5));
+    if(priceToken) price = priceToken.replace(',', '.');
+
+    let name = line;
+    numTokens.forEach(tok=>{ name = name.replace(tok, ''); });
+    name = name.replace(/[|_\-–—:.,]+/g,' ').replace(/\s+/g,' ').trim();
+
+    if(name || barcode || price){
+      rows.push({name, price, barcode});
+    }
+  }
+  return rows;
+}
+
+function renderRows(){
+  const wrap = document.getElementById('rowsList');
+  wrap.innerHTML = rowsData.map((r,i)=>`
+    <div class="prow" data-i="${i}">
+      <button class="rm" data-rm="${i}">✕ حذف</button>
+      <input placeholder="اسم المنتج" value="${escapeHtml(r.name)}" data-field="name" data-i="${i}" style="margin-top:14px;">
+      <div class="grid2">
+        <input class="mono" placeholder="السعر" value="${escapeHtml(r.price)}" data-field="price" data-i="${i}" inputmode="decimal">
+        <input class="mono" placeholder="الباركود" value="${escapeHtml(r.barcode)}" data-field="barcode" data-i="${i}" inputmode="numeric">
+      </div>
+    </div>
+  `).join('');
+  wrap.querySelectorAll('input').forEach(inp=>{
+    inp.addEventListener('input', (e)=>{
+      const i = Number(e.target.dataset.i);
+      rowsData[i][e.target.dataset.field] = e.target.value;
+    });
+  });
+  wrap.querySelectorAll('[data-rm]').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      const i = Number(e.target.dataset.rm);
+      rowsData.splice(i,1);
+      if(rowsData.length===0) rowsData.push({name:'',price:'',barcode:''});
+      renderRows();
+    });
+  });
+}
+
+async function saveAllRows(){
+  const valid = rowsData.filter(r => (r.name && r.name.trim()) || (r.barcode && r.barcode.trim()));
+  if(valid.length === 0){ toast('أدخل اسم أو باركود على الأقل'); return; }
+  const now = Date.now();
+  for(const r of valid){
+    const id = 'p_' + now + '_' + Math.random().toString(36).slice(2,8);
+    const indexEntry = { id, name: r.name.trim(), price: r.price.trim(), barcode: r.barcode.trim(), createdAt: now, thumb: currentThumbDataUrl || null };
+    state.products.push(indexEntry);
+    await saveFullRecord(id, indexEntry);
+  }
+  await saveIndex();
+  closeSheet(); render();
+  toast(`تم حفظ ${valid.length} منتج`);
+}
+
+// ---------- init ----------
+loadIndex();
+</script>
+</body>
+</html>
