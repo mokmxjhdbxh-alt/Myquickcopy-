@@ -180,6 +180,10 @@
   .toast.show{opacity:1;}
 
   .hint{font-size:11.5px; color:var(--ink-soft); margin-top:6px; line-height:1.6;}
+
+  .crop-wrap{position:relative; touch-action:none; user-select:none; border-radius:8px; overflow:hidden; line-height:0; background:#000; max-height:60vh; overflow-y:auto;}
+  .crop-wrap img{width:100%; height:auto; display:block;}
+  .crop-sel{position:absolute; border:2px solid var(--accent); background:rgba(232,98,44,0.18); pointer-events:none;}
 </style>
 </head>
 <body>
@@ -217,28 +221,60 @@ let currentPhotoDataUrl = null;
 let currentThumbDataUrl = null;
 let rowsData = []; // {name, price, barcode}
 
-// ---------- storage helpers ----------
+// ---------- storage layer ----------
+// Uses window.storage when running inside a Claude artifact (persists across sessions there).
+// Falls back to localStorage automatically when running standalone (e.g. GitHub Pages, any normal web host),
+// since window.storage only exists inside Claude's artifact runtime.
+const HAS_CLAUDE_STORAGE = (typeof window.storage !== 'undefined' && window.storage !== null);
+
+async function storageSet(key, value){
+  if(HAS_CLAUDE_STORAGE){
+    try{ await window.storage.set(key, value, false); return true; }
+    catch(e){ console.error('storage.set failed', e); return false; }
+  }else{
+    try{ localStorage.setItem(key, value); return true; }
+    catch(e){ console.error('localStorage.setItem failed', e); return false; }
+  }
+}
+async function storageGet(key){
+  if(HAS_CLAUDE_STORAGE){
+    try{ const res = await window.storage.get(key, false); return res ? res.value : null; }
+    catch(e){ return null; }
+  }else{
+    try{ return localStorage.getItem(key); }
+    catch(e){ return null; }
+  }
+}
+async function storageDelete(key){
+  if(HAS_CLAUDE_STORAGE){
+    try{ await window.storage.delete(key, false); }catch(e){}
+  }else{
+    try{ localStorage.removeItem(key); }catch(e){}
+  }
+}
+
 async function loadIndex(){
   try{
-    const res = await window.storage.get(STORAGE_INDEX_KEY, false);
-    if(res && res.value){ state.products = JSON.parse(res.value); }
+    const raw = await storageGet(STORAGE_INDEX_KEY);
+    if(raw){ state.products = JSON.parse(raw); }
   }catch(e){ state.products = []; }
   render();
 }
 async function saveIndex(){
-  await window.storage.set(STORAGE_INDEX_KEY, JSON.stringify(state.products), false);
+  const ok = await storageSet(STORAGE_INDEX_KEY, JSON.stringify(state.products));
+  if(!ok) toast('تعذّر الحفظ في هذا المتصفح');
 }
 async function saveFullRecord(id, record){
-  await window.storage.set('product:'+id, JSON.stringify(record), false);
+  await storageSet('product:'+id, JSON.stringify(record));
 }
 async function getFullRecord(id){
   try{
-    const res = await window.storage.get('product:'+id, false);
-    return res ? JSON.parse(res.value) : null;
+    const raw = await storageGet('product:'+id);
+    return raw ? JSON.parse(raw) : null;
   }catch(e){ return null; }
 }
 async function deleteFullRecord(id){
-  try{ await window.storage.delete('product:'+id, false); }catch(e){}
+  await storageDelete('product:'+id);
 }
 
 function toast(msg){
@@ -262,10 +298,11 @@ function render(){
   let list = state.products.slice().sort((a,b)=>b.createdAt - a.createdAt);
   if(q){
     const qDigits = q.replace(/[^0-9]/g,'');
+    const qLower = q.toLowerCase();
     list = list.filter(p=>{
-      const nameMatch = (p.name||'').includes(q);
+      const nameMatch = (p.name||'').toLowerCase().includes(qLower);
       const barcodeMatch = qDigits && (p.barcode||'').includes(qDigits);
-      const barcodeTextMatch = (p.barcode||'').includes(q);
+      const barcodeTextMatch = (p.barcode||'').toLowerCase().includes(qLower);
       return nameMatch || barcodeMatch || barcodeTextMatch;
     });
     // prioritize exact/startswith barcode matches
@@ -331,7 +368,7 @@ async function openEditSheet(id){
         <div class="card-edit" style="border:none; padding:0;">
           <div class="field"><label>اسم المنتج</label><input id="editName" value="${escapeHtml(idx.name||'')}"></div>
           <div class="field"><label>السعر</label><input id="editPrice" class="mono" value="${idx.price ?? ''}" inputmode="decimal"></div>
-          <div class="field"><label>الباركود</label><input id="editBarcode" class="mono" value="${idx.barcode ?? ''}" inputmode="numeric"></div>
+          <div class="field"><label>الباركود</label><input id="editBarcode" class="mono" value="${idx.barcode ?? ''}"></div>
           <div class="btn-row">
             <button class="btn btn-ok" style="flex:1" id="saveEditBtn">حفظ التعديل</button>
             <button class="btn btn-danger" id="deleteBtn">حذف</button>
@@ -374,15 +411,12 @@ function openAddSheet(){
         <div class="photo-box" id="photoBox">
           <div>📷 صوّر الجدول أو ارفع صورة له</div>
           <div class="photo-actions">
-            <label class="btn btn-accent">
-              التقاط صورة
-              <input type="file" accept="image/*" capture="environment" id="cameraInput">
-            </label>
-            <label class="btn btn-ghost">
-              من المعرض
+            <label class="btn btn-accent btn-block">
+              اختيار صورة (كاميرا أو معرض)
               <input type="file" accept="image/*" id="galleryInput">
             </label>
           </div>
+          <div class="hint" id="pickerHint">إذا ما فتحت الكاميرا مباشرة، جهازك بيعرض لك خيار "التقاط صورة" أو "اختيار من المعرض" بعد الضغط.</div>
         </div>
         <div id="ocrStatus"></div>
         <div id="rowsWrap" style="display:none;">
@@ -402,23 +436,104 @@ function openAddSheet(){
   `;
   document.getElementById('backdrop').addEventListener('click', (e)=>{ if(e.target.id==='backdrop') closeSheet(); });
   document.getElementById('closeAddBtn').addEventListener('click', closeSheet);
-  document.getElementById('cameraInput').addEventListener('change', handlePhotoInput);
   document.getElementById('galleryInput').addEventListener('change', handlePhotoInput);
 }
 
 function handlePhotoInput(e){
-  const file = e.target.files[0];
-  if(!file) return;
+  const file = e.target.files && e.target.files[0];
+  if(!file){ toast('ما تم اختيار أي صورة'); return; }
   const reader = new FileReader();
-  reader.onload = async (ev)=>{
-    currentPhotoDataUrl = ev.target.result;
-    const box = document.getElementById('photoBox');
-    box.innerHTML = `<img src="${currentPhotoDataUrl}">`;
-    // build thumbnail
-    currentThumbDataUrl = await makeThumbnail(currentPhotoDataUrl, 300);
-    runOcr(currentPhotoDataUrl);
-  };
+  reader.onload = (ev)=>{ showCropStep(ev.target.result); };
+  reader.onerror = ()=>{ toast('تعذّرت قراءة الصورة، جرب صورة ثانية'); };
   reader.readAsDataURL(file);
+}
+
+function showCropStep(dataUrl){
+  const box = document.getElementById('photoBox');
+  box.innerHTML = `
+    <div class="hint" style="margin-bottom:8px;">✂️ اسحب بإصبعك على الصورة لتحديد منطقة الجدول فقط (بدون شريط الحالة أو أزرار التطبيق) — هذا يحسّن دقة القراءة كثير</div>
+    <div class="crop-wrap" id="cropWrap">
+      <img id="cropImg" src="${dataUrl}" draggable="false">
+      <div class="crop-sel" id="cropSel" style="display:none;"></div>
+    </div>
+    <div class="photo-actions">
+      <button class="btn btn-accent btn-block" id="confirmCropBtn">✅ تأكيد التحديد ومتابعة</button>
+    </div>
+    <div class="photo-actions">
+      <button class="btn btn-ghost btn-block" id="useFullBtn">تجاهل واستخدام الصورة كاملة</button>
+    </div>
+  `;
+  setupCropInteraction(dataUrl);
+}
+
+function setupCropInteraction(dataUrl){
+  const wrap = document.getElementById('cropWrap');
+  const img = document.getElementById('cropImg');
+  const sel = document.getElementById('cropSel');
+  let startX = 0, startY = 0, dragging = false;
+
+  function getPos(e){
+    const rect = wrap.getBoundingClientRect();
+    const x = Math.min(Math.max(e.clientX - rect.left, 0), rect.width);
+    const y = Math.min(Math.max(e.clientY - rect.top, 0), rect.height) + wrap.scrollTop;
+    return { x, y };
+  }
+  function start(e){
+    dragging = true;
+    const p = getPos(e);
+    startX = p.x; startY = p.y;
+    sel.style.display = 'block';
+    sel.style.left = startX+'px'; sel.style.top = startY+'px';
+    sel.style.width = '0px'; sel.style.height = '0px';
+    try{ wrap.setPointerCapture(e.pointerId); }catch(err){}
+  }
+  function move(e){
+    if(!dragging) return;
+    const p = getPos(e);
+    const left = Math.min(startX, p.x), top = Math.min(startY, p.y);
+    const w = Math.abs(p.x - startX), h = Math.abs(p.y - startY);
+    sel.style.left = left+'px'; sel.style.top = top+'px';
+    sel.style.width = w+'px'; sel.style.height = h+'px';
+  }
+  function end(){ dragging = false; }
+
+  wrap.addEventListener('pointerdown', start);
+  wrap.addEventListener('pointermove', move);
+  wrap.addEventListener('pointerup', end);
+  wrap.addEventListener('pointercancel', end);
+
+  document.getElementById('confirmCropBtn').addEventListener('click', ()=>{
+    if(sel.style.display === 'none' || sel.offsetWidth < 20 || sel.offsetHeight < 20){
+      toast('حدد منطقة الجدول بالسحب على الصورة أول');
+      return;
+    }
+    finalizeCrop(img, sel);
+  });
+  document.getElementById('useFullBtn').addEventListener('click', ()=> proceedWithImage(dataUrl));
+}
+
+function finalizeCrop(imgEl, selEl){
+  const scaleX = imgEl.naturalWidth / imgEl.clientWidth;
+  const scaleY = imgEl.naturalHeight / imgEl.clientHeight;
+  const sx = selEl.offsetLeft * scaleX;
+  const sy = selEl.offsetTop * scaleY;
+  const sw = selEl.offsetWidth * scaleX;
+  const sh = selEl.offsetHeight * scaleY;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(sw));
+  canvas.height = Math.max(1, Math.round(sh));
+  canvas.getContext('2d').drawImage(imgEl, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  proceedWithImage(canvas.toDataURL('image/jpeg', 0.92));
+}
+
+async function proceedWithImage(dataUrl){
+  currentPhotoDataUrl = dataUrl;
+  const box = document.getElementById('photoBox');
+  box.innerHTML = `<img src="${dataUrl}">`;
+  try{
+    currentThumbDataUrl = await makeThumbnail(dataUrl, 300);
+  }catch(err){ currentThumbDataUrl = null; }
+  runOcr(dataUrl);
 }
 
 function makeThumbnail(dataUrl, maxW){
@@ -442,7 +557,7 @@ async function runOcr(dataUrl){
   const statusEl = document.getElementById('ocrStatus');
   statusEl.innerHTML = `<div class="ocr-status"><div class="spinner"></div><span>جاري قراءة البيانات من الصورة تلقائيًا...</span></div>`;
   try{
-    const result = await Tesseract.recognize(dataUrl, 'eng', {
+    const result = await Tesseract.recognize(dataUrl, 'ara+eng', {
       logger: ()=>{}
     });
     const text = result && result.data ? result.data.text : '';
@@ -462,34 +577,50 @@ async function runOcr(dataUrl){
   document.getElementById('saveAllBtn').addEventListener('click', saveAllRows);
 }
 
+function isNoiseLine(line){
+  const trimmed = line.trim();
+  if(trimmed.length < 2) return true;
+  if(/^\d{1,2}[:.]\d{2}$/.test(trimmed)) return true; // clock time like 12:59
+  const cleaned = trimmed.replace(/\s+/g,'');
+  const meaningfulChars = (cleaned.match(/[A-Za-z0-9\u0600-\u06FF]/g) || []).length;
+  if(cleaned.length === 0 || meaningfulChars / cleaned.length < 0.5) return true; // mostly symbols/junk
+  return false;
+}
+
 function parseLinesToRows(text){
-  const lines = text.split('\n').map(l=>l.trim()).filter(l=>l.length>0);
+  const rawLines = text.split('\n').map(l=>l.trim()).filter(l=>l.length>0);
+  const lines = rawLines.filter(l => !isNoiseLine(l));
   const rows = [];
+
   for(const line of lines){
-    const numTokens = line.match(/\d+(?:[.,]\d+)?/g) || [];
-    if(numTokens.length === 0){
-      // could still be a header or noise line, skip if too short
-      continue;
-    }
-    let barcode = '';
-    let price = '';
-    // longest pure-integer token >=6 digits -> barcode
-    let barcodeToken = null;
-    numTokens.forEach(tok=>{
-      const digitsOnly = tok.replace(/[.,]/g,'');
-      if(!tok.includes('.') && !tok.includes(',') && digitsOnly.length >= 6){
-        if(!barcodeToken || digitsOnly.length > barcodeToken.length) barcodeToken = tok;
+    const tokens = line.split(/\s+/).filter(Boolean);
+    const hasAnyDigit = tokens.some(t => /[0-9]/.test(t));
+    if(!hasAnyDigit) continue; // skip header/label lines with no numbers at all (e.g. column titles)
+
+    let barcode = '', price = '';
+    const nameWords = [];
+
+    tokens.forEach(tok=>{
+      const hasLetter = /[A-Za-z\u0600-\u06FF]/.test(tok);
+      const hasDigit = /[0-9]/.test(tok);
+      const isAsciiCode = /^[A-Za-z0-9\-]+$/.test(tok);
+
+      if(!barcode && hasLetter && hasDigit && isAsciiCode && tok.length >= 4){
+        // alphanumeric code, e.g. Vdh123
+        barcode = tok;
+      } else if(!barcode && /^\d+$/.test(tok) && tok.length >= 6){
+        // long pure-numeric barcode, e.g. 6291234567890
+        barcode = tok;
+      } else if(!price && /^\d+[.,]\d{1,3}$/.test(tok)){
+        price = tok.replace(',', '.');
+      } else if(!price && /^\d+$/.test(tok) && tok.length <= 5){
+        price = tok;
+      } else if(hasLetter && tok !== barcode){
+        nameWords.push(tok);
       }
     });
-    if(barcodeToken) barcode = barcodeToken;
-    // price: first token with decimal, or first short token that's not the barcode
-    const priceToken = numTokens.find(tok => tok !== barcodeToken && (tok.includes('.') || tok.includes(',') || tok.replace(/[.,]/g,'').length <= 5));
-    if(priceToken) price = priceToken.replace(',', '.');
 
-    let name = line;
-    numTokens.forEach(tok=>{ name = name.replace(tok, ''); });
-    name = name.replace(/[|_\-–—:.,]+/g,' ').replace(/\s+/g,' ').trim();
-
+    const name = nameWords.join(' ').replace(/[|_\-–—:.,]+/g,' ').replace(/\s+/g,' ').trim();
     if(name || barcode || price){
       rows.push({name, price, barcode});
     }
@@ -505,7 +636,7 @@ function renderRows(){
       <input placeholder="اسم المنتج" value="${escapeHtml(r.name)}" data-field="name" data-i="${i}" style="margin-top:14px;">
       <div class="grid2">
         <input class="mono" placeholder="السعر" value="${escapeHtml(r.price)}" data-field="price" data-i="${i}" inputmode="decimal">
-        <input class="mono" placeholder="الباركود" value="${escapeHtml(r.barcode)}" data-field="barcode" data-i="${i}" inputmode="numeric">
+        <input class="mono" placeholder="الباركود" value="${escapeHtml(r.barcode)}" data-field="barcode" data-i="${i}">
       </div>
     </div>
   `).join('');
